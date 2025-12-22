@@ -2,6 +2,7 @@ import { Elysia } from 'elysia';
 import { loadConfig, getConfig } from './utils/config';
 import { logger } from './utils/logger';
 import { dbClient } from './db/client';
+import { commandLogger, CommandPayload } from './services/commandLogger';
 
 // Load configuration
 loadConfig();
@@ -19,17 +20,20 @@ try {
 
 const app = new Elysia()
   .get('/health', () => {
-    // Test database connection
     try {
       const stats = dbClient.getLatestSystemStats(1);
+      const cmdStats = commandLogger.getStats();
+
       return {
         status: 'ok',
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         service: 'linux-activity-tracker',
         database: 'connected',
-        recordCount: {
-          systemStats: stats.length
+        stats: {
+          commandsTotal: cmdStats.total,
+          commandsToday: cmdStats.today,
+          systemStatsRecords: stats.length
         }
       };
     } catch (error) {
@@ -48,11 +52,63 @@ const app = new Elysia()
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      stats: '/stats',
+      commandLog: 'POST /api/command',
       commands: '/commands',
+      commandStats: '/commands/stats',
+      stats: '/stats',
       graphql: '/graphql (coming in Step 8)'
     }
   }))
+
+  // Command logging endpoint
+  .post('/api/command', async ({ body, headers }) => {
+    try {
+      const payload = body as CommandPayload;
+
+      // Validate payload
+      if (!payload.cmd || !payload.cwd) {
+        return {
+          success: false,
+          error: 'Missing required fields: cmd, cwd'
+        };
+      }
+
+      // Log command
+      const id = commandLogger.logCommand(payload);
+
+      if (id) {
+        return {
+          success: true,
+          id,
+          timestamp: Date.now()
+        };
+      } else {
+        return {
+          success: false,
+          error: 'Failed to log command'
+        };
+      }
+    } catch (error) {
+      logger.error('Error in /api/command', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  })
+
+  .get('/commands', () => {
+    const recentCommands = dbClient.getRecentCommands(50);
+    return {
+      commands: recentCommands,
+      count: recentCommands.length
+    };
+  })
+
+  .get('/commands/stats', () => {
+    return commandLogger.getStats();
+  })
+
   .get('/stats', () => {
     const recentStats = dbClient.getLatestSystemStats(10);
     return {
@@ -60,13 +116,7 @@ const app = new Elysia()
       count: recentStats.length
     };
   })
-  .get('/commands', () => {
-    const recentCommands = dbClient.getRecentCommands(20);
-    return {
-      commands: recentCommands,
-      count: recentCommands.length
-    };
-  })
+
   .listen(config.server.port);
 
 // Graceful shutdown
@@ -88,5 +138,8 @@ console.log(`
 🏥 Health: http://${app.server?.hostname}:${app.server?.port}/health
 📊 Stats: http://${app.server?.hostname}:${app.server?.port}/stats
 📝 Commands: http://${app.server?.hostname}:${app.server?.port}/commands
-`);
+📈 Command Stats: http://${app.server?.hostname}:${app.server?.port}/commands/stats
 
+🔧 To install shell hook:
+   cd shell-hooks && bash install.sh
+`);
