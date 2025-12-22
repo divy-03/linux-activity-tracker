@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "test:db": "bun run test-db.ts",
     "test:ram": "bun run test-ram.ts",
-    "test:detector": "bun run test-detector.ts"
+    "test:detector": "bun run test-detector.ts",
+    "test:processes": "bun run test-processes.ts"
   },
   "dependencies": {
     "elysia": "latest",

@@ -5,6 +5,7 @@ import { dbClient } from './db/client';
 import { commandLogger, CommandPayload } from './services/commandLogger';
 import { ramMonitor } from './services/ramMonitor';
 import { ramDetector } from './services/ramDetector';
+import { processScanner } from './system/processScanner';
 
 // Load configuration
 loadConfig();
@@ -25,13 +26,11 @@ try {
   ramMonitor.start();
   logger.info('✅ RAM monitoring started');
 
-  // Register high RAM callback (will be used in Step 7)
   ramMonitor.onHighRAM((snapshot) => {
     logger.warn(`⚠️  High RAM callback triggered: ${snapshot.percent}%`);
 
     if (config.ram.enableAutoKill) {
       logger.info('TODO: Trigger process killer (Step 7)');
-      // processManager.killHighestMemoryProcess();
     } else {
       logger.info('Auto-kill disabled in config');
     }
@@ -46,6 +45,7 @@ const app = new Elysia()
       const cmdStats = commandLogger.getStats();
       const ramStatus = ramMonitor.getStatus();
       const lastSnapshot = ramMonitor.getLastSnapshot();
+      const procStats = processScanner.getStats();
 
       return {
         status: 'ok',
@@ -66,6 +66,7 @@ const app = new Elysia()
             cooldownMultiplier: ramStatus.detector.cooldownMultiplier
           }
         },
+        processes: procStats,
         stats: {
           commandsTotal: cmdStats.total,
           commandsToday: cmdStats.today
@@ -95,6 +96,11 @@ const app = new Elysia()
       detectorStats: '/detector/stats',
       detectorHistory: '/detector/history',
       detectorReset: 'POST /detector/reset',
+      processes: '/processes',
+      processesKillable: '/processes/killable',
+      processesTop: '/processes/top',
+      processStats: '/processes/stats',
+      processValidate: '/processes/validate/:pid',
       events: '/events',
       graphql: '/graphql (coming in Step 8)'
     }
@@ -172,6 +178,33 @@ const app = new Elysia()
     };
   })
 
+  // Process endpoints
+  .get('/processes', () => {
+    const processes = processScanner.getUserProcesses();
+    return { processes, count: processes.length };
+  })
+
+  .get('/processes/killable', () => {
+    const killable = processScanner.getKillableProcesses();
+    return { processes: killable, count: killable.length };
+  })
+
+  .get('/processes/top', ({ query }) => {
+    const limit = parseInt(query.limit as string) || 10;
+    const top = processScanner.getTopMemoryConsumers(limit);
+    return { processes: top, count: top.length };
+  })
+
+  .get('/processes/stats', () => processScanner.getStats())
+
+  .get('/processes/validate/:pid', ({ params }) => {
+    const pid = parseInt(params.pid, 10);
+    if (isNaN(pid)) {
+      return { valid: false, reason: 'Invalid PID' };
+    }
+    return processScanner.validateProcess(pid);
+  })
+
   // Events endpoint
   .get('/events', ({ query }) => {
     const type = query.type as string;
@@ -204,12 +237,16 @@ console.log(`
    Current: http://${app.server?.hostname}:${app.server?.port}/ram/current
    History: http://${app.server?.hostname}:${app.server?.port}/ram/history
    Stats: http://${app.server?.hostname}:${app.server?.port}/ram/stats
-   Status: http://${app.server?.hostname}:${app.server?.port}/ram/status
 
 🔍 Detector:
    Stats: http://${app.server?.hostname}:${app.server?.port}/detector/stats
    History: http://${app.server?.hostname}:${app.server?.port}/detector/history
-   Reset: POST http://${app.server?.hostname}:${app.server?.port}/detector/reset
+
+⚙️  Processes:
+   All: http://${app.server?.hostname}:${app.server?.port}/processes
+   Killable: http://${app.server?.hostname}:${app.server?.port}/processes/killable
+   Top: http://${app.server?.hostname}:${app.server?.port}/processes/top
+   Stats: http://${app.server?.hostname}:${app.server?.port}/processes/stats
 
 📝 Commands:
    List: http://${app.server?.hostname}:${app.server?.port}/commands
