@@ -40,3 +40,11 @@ yarn-error.log*
 **/*.log
 package-lock.json
 **/*.bun
+
+node_modules/
+dist/
+*.db
+*.db-journal
+data/
+.env
+.DS_Store

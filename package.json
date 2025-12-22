@@ -1,15 +1,24 @@
 {
   "name": "linux-activity-tracker",
   "version": "1.0.50",
+  "module": "src/server.ts",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "bun run --watch src/index.ts"
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "build": "bun build src/server.ts --outdir ./dist --target bun",
+    "check": "tsc --noEmit"
   },
   "dependencies": {
-    "elysia": "latest"
+    "elysia": "latest",
+    "@elysiajs/graphql-yoga": "^1.1.2",
+    "graphql": "^16.8.1"
   },
   "devDependencies": {
-    "bun-types": "latest"
+    "@types/bun": "latest",
+    "typescript": "^5.3.3"
   },
-  "module": "src/index.js"
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
 }
