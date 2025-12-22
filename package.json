@@ -1,6 +1,6 @@
 {
   "name": "linux-activity-tracker",
-  "version": "1.0.50",
+  "version": "1.0.0",
   "module": "src/server.ts",
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
     "build": "bun build src/server.ts --outdir ./dist --target bun",
     "check": "tsc --noEmit",
     "test:db": "bun run test-db.ts",
-    "test:ram": "bun run test-ram.ts"
+    "test:ram": "bun run test-ram.ts",
+    "test:detector": "bun run test-detector.ts"
   },
   "dependencies": {
     "elysia": "latest",
@@ -19,8 +20,5 @@
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.3.3"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
   }
 }

@@ -4,6 +4,7 @@ import { logger } from './utils/logger';
 import { dbClient } from './db/client';
 import { commandLogger, CommandPayload } from './services/commandLogger';
 import { ramMonitor } from './services/ramMonitor';
+import { ramDetector } from './services/ramDetector';
 
 // Load configuration
 loadConfig();
@@ -23,6 +24,18 @@ try {
 try {
   ramMonitor.start();
   logger.info('✅ RAM monitoring started');
+
+  // Register high RAM callback (will be used in Step 7)
+  ramMonitor.onHighRAM((snapshot) => {
+    logger.warn(`⚠️  High RAM callback triggered: ${snapshot.percent}%`);
+
+    if (config.ram.enableAutoKill) {
+      logger.info('TODO: Trigger process killer (Step 7)');
+      // processManager.killHighestMemoryProcess();
+    } else {
+      logger.info('Auto-kill disabled in config');
+    }
+  });
 } catch (error) {
   logger.error('❌ Failed to start RAM monitoring', error);
 }
@@ -47,7 +60,11 @@ const app = new Elysia()
             percent: lastSnapshot.percent,
             used_mb: lastSnapshot.used_mb,
             available_mb: lastSnapshot.available_mb
-          } : null
+          } : null,
+          detector: {
+            inCooldown: ramStatus.detector.isInCooldown,
+            cooldownMultiplier: ramStatus.detector.cooldownMultiplier
+          }
         },
         stats: {
           commandsTotal: cmdStats.total,
@@ -75,6 +92,9 @@ const app = new Elysia()
       ramHistory: '/ram/history',
       ramStats: '/ram/stats',
       ramStatus: '/ram/status',
+      detectorStats: '/detector/stats',
+      detectorHistory: '/detector/history',
+      detectorReset: 'POST /detector/reset',
       events: '/events',
       graphql: '/graphql (coming in Step 8)'
     }
@@ -86,10 +106,7 @@ const app = new Elysia()
       const payload = body as CommandPayload;
 
       if (!payload.cmd || !payload.cwd) {
-        return {
-          success: false,
-          error: 'Missing required fields: cmd, cwd'
-        };
+        return { success: false, error: 'Missing required fields: cmd, cwd' };
       }
 
       const id = commandLogger.logCommand(payload);
@@ -137,6 +154,24 @@ const app = new Elysia()
 
   .get('/ram/status', () => ramMonitor.getStatus())
 
+  // Detector endpoints
+  .get('/detector/stats', () => ramDetector.getStats())
+
+  .get('/detector/history', ({ query }) => {
+    const limit = parseInt(query.limit as string) || 50;
+    const history = ramDetector.getHistory(limit);
+    return { history, count: history.length };
+  })
+
+  .post('/detector/reset', () => {
+    ramDetector.resetCooldown();
+    return {
+      success: true,
+      message: 'Cooldown reset successfully',
+      timestamp: Date.now()
+    };
+  })
+
   // Events endpoint
   .get('/events', ({ query }) => {
     const type = query.type as string;
@@ -171,8 +206,12 @@ console.log(`
    Stats: http://${app.server?.hostname}:${app.server?.port}/ram/stats
    Status: http://${app.server?.hostname}:${app.server?.port}/ram/status
 
+🔍 Detector:
+   Stats: http://${app.server?.hostname}:${app.server?.port}/detector/stats
+   History: http://${app.server?.hostname}:${app.server?.port}/detector/history
+   Reset: POST http://${app.server?.hostname}:${app.server?.port}/detector/reset
+
 📝 Commands:
-   Log: POST http://${app.server?.hostname}:${app.server?.port}/api/command
    List: http://${app.server?.hostname}:${app.server?.port}/commands
    Stats: http://${app.server?.hostname}:${app.server?.port}/commands/stats
 

@@ -2,6 +2,7 @@ import { procParser, MemoryInfo } from '../system/procParser';
 import { dbClient } from '../db/client';
 import { logger } from '../utils/logger';
 import { getConfig } from '../utils/config';
+import { ramDetector } from './ramDetector';
 
 export interface RAMSnapshot extends MemoryInfo {
   timestamp: number;
@@ -18,6 +19,7 @@ export class RAMMonitor {
   private isRunning: boolean = false;
   private lastSnapshot: RAMSnapshot | null = null;
   private monitoringStartTime: number = Date.now();
+  private onHighRAMCallback: ((snapshot: RAMSnapshot) => void) | null = null;
 
   /**
    * Start monitoring RAM usage
@@ -31,7 +33,7 @@ export class RAMMonitor {
     const config = getConfig();
     const interval = config.ram.monitorInterval;
 
-    logger.info(`Starting RAM monitor (interval: ${interval}ms)`);
+    logger.info(`Starting RAM monitor (interval: ${interval}ms, threshold: ${config.ram.threshold}%)`);
 
     // Take initial snapshot
     this.captureSnapshot();
@@ -49,7 +51,7 @@ export class RAMMonitor {
       type: 'ram_monitor',
       severity: 'info',
       message: 'RAM monitoring started',
-      metadata: JSON.stringify({ interval })
+      metadata: JSON.stringify({ interval, threshold: config.ram.threshold })
     });
   }
 
@@ -82,6 +84,13 @@ export class RAMMonitor {
   }
 
   /**
+   * Set callback for high RAM events
+   */
+  onHighRAM(callback: (snapshot: RAMSnapshot) => void): void {
+    this.onHighRAMCallback = callback;
+  }
+
+  /**
    * Capture a RAM snapshot and store it
    */
   private captureSnapshot(): void {
@@ -110,10 +119,22 @@ export class RAMMonitor {
       // Update last snapshot
       this.lastSnapshot = snapshot;
 
-      logger.debug(`RAM snapshot: ${snapshot.percent}% (${snapshot.used_mb}MB / ${snapshot.total_mb}MB)`);
+      logger.debug(
+        `RAM: ${snapshot.percent}% (${snapshot.used_mb}/${snapshot.total_mb}MB) ` +
+        `Load: ${snapshot.load_avg.load1}`
+      );
 
-      // Check if threshold exceeded
-      this.checkThreshold(snapshot);
+      // Check threshold with detection logic
+      const shouldTakeAction = ramDetector.checkThreshold(snapshot);
+
+      if (shouldTakeAction) {
+        logger.warn('🚨 HIGH RAM DETECTED - Action required!');
+
+        // Trigger callback if set
+        if (this.onHighRAMCallback) {
+          this.onHighRAMCallback(snapshot);
+        }
+      }
     } catch (error) {
       logger.error('Failed to capture RAM snapshot', error);
 
@@ -123,34 +144,6 @@ export class RAMMonitor {
         message: 'Failed to capture RAM snapshot',
         metadata: JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown' })
       });
-    }
-  }
-
-  /**
-   * Check if RAM usage exceeds threshold
-   */
-  private checkThreshold(snapshot: RAMSnapshot): void {
-    const config = getConfig();
-    const threshold = config.ram.threshold;
-
-    if (snapshot.percent > threshold) {
-      logger.warn(`⚠️  RAM usage exceeded threshold: ${snapshot.percent}% > ${threshold}%`);
-
-      // Log high RAM event
-      dbClient.insertEvent({
-        type: 'ram_threshold_exceeded',
-        severity: 'warning',
-        message: `RAM usage exceeded ${threshold}%`,
-        metadata: JSON.stringify({
-          current: snapshot.percent,
-          threshold,
-          used_mb: snapshot.used_mb,
-          total_mb: snapshot.total_mb,
-          available_mb: snapshot.available_mb
-        })
-      });
-
-      // TODO: Trigger process killer in Step 5
     }
   }
 
@@ -165,13 +158,18 @@ export class RAMMonitor {
    * Get monitoring status
    */
   getStatus() {
+    const detectorStats = ramDetector.getStats();
+
     return {
       isRunning: this.isRunning,
       uptime: this.isRunning ? Date.now() - this.monitoringStartTime : 0,
       lastSnapshot: this.lastSnapshot,
+      detector: detectorStats,
       config: {
         interval: getConfig().ram.monitorInterval,
-        threshold: getConfig().ram.threshold
+        threshold: getConfig().ram.threshold,
+        cooldown: getConfig().ram.cooldown,
+        autoKillEnabled: getConfig().ram.enableAutoKill
       }
     };
   }
@@ -232,3 +230,4 @@ export class RAMMonitor {
 }
 
 export const ramMonitor = new RAMMonitor();
+
