@@ -7,7 +7,9 @@
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
     "build": "bun build src/server.ts --outdir ./dist --target bun",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test:db": "bun run test-db.ts",
+    "test:ram": "bun run test-ram.ts"
   },
   "dependencies": {
     "elysia": "latest",

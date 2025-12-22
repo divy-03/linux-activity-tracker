@@ -3,6 +3,7 @@ import { loadConfig, getConfig } from './utils/config';
 import { logger } from './utils/logger';
 import { dbClient } from './db/client';
 import { commandLogger, CommandPayload } from './services/commandLogger';
+import { ramMonitor } from './services/ramMonitor';
 
 // Load configuration
 loadConfig();
@@ -18,11 +19,20 @@ try {
   process.exit(1);
 }
 
+// Start RAM monitoring
+try {
+  ramMonitor.start();
+  logger.info('✅ RAM monitoring started');
+} catch (error) {
+  logger.error('❌ Failed to start RAM monitoring', error);
+}
+
 const app = new Elysia()
   .get('/health', () => {
     try {
-      const stats = dbClient.getLatestSystemStats(1);
       const cmdStats = commandLogger.getStats();
+      const ramStatus = ramMonitor.getStatus();
+      const lastSnapshot = ramMonitor.getLastSnapshot();
 
       return {
         status: 'ok',
@@ -30,23 +40,29 @@ const app = new Elysia()
         uptime: process.uptime(),
         service: 'linux-activity-tracker',
         database: 'connected',
+        ramMonitor: {
+          running: ramStatus.isRunning,
+          uptime: ramStatus.uptime,
+          current: lastSnapshot ? {
+            percent: lastSnapshot.percent,
+            used_mb: lastSnapshot.used_mb,
+            available_mb: lastSnapshot.available_mb
+          } : null
+        },
         stats: {
           commandsTotal: cmdStats.total,
-          commandsToday: cmdStats.today,
-          systemStatsRecords: stats.length
+          commandsToday: cmdStats.today
         }
       };
     } catch (error) {
       return {
         status: 'degraded',
         timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        service: 'linux-activity-tracker',
-        database: 'error',
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
   })
+
   .get('/', () => ({
     message: 'Linux Activity Tracker API',
     version: '1.0.0',
@@ -55,17 +71,20 @@ const app = new Elysia()
       commandLog: 'POST /api/command',
       commands: '/commands',
       commandStats: '/commands/stats',
-      stats: '/stats',
+      ramCurrent: '/ram/current',
+      ramHistory: '/ram/history',
+      ramStats: '/ram/stats',
+      ramStatus: '/ram/status',
+      events: '/events',
       graphql: '/graphql (coming in Step 8)'
     }
   }))
 
   // Command logging endpoint
-  .post('/api/command', async ({ body, headers }) => {
+  .post('/api/command', async ({ body }) => {
     try {
       const payload = body as CommandPayload;
 
-      // Validate payload
       if (!payload.cmd || !payload.cwd) {
         return {
           success: false,
@@ -73,20 +92,12 @@ const app = new Elysia()
         };
       }
 
-      // Log command
       const id = commandLogger.logCommand(payload);
 
       if (id) {
-        return {
-          success: true,
-          id,
-          timestamp: Date.now()
-        };
+        return { success: true, id, timestamp: Date.now() };
       } else {
-        return {
-          success: false,
-          error: 'Failed to log command'
-        };
+        return { success: false, error: 'Failed to log command' };
       }
     } catch (error) {
       logger.error('Error in /api/command', error);
@@ -99,47 +110,74 @@ const app = new Elysia()
 
   .get('/commands', () => {
     const recentCommands = dbClient.getRecentCommands(50);
-    return {
-      commands: recentCommands,
-      count: recentCommands.length
-    };
+    return { commands: recentCommands, count: recentCommands.length };
   })
 
-  .get('/commands/stats', () => {
-    return commandLogger.getStats();
+  .get('/commands/stats', () => commandLogger.getStats())
+
+  // RAM endpoints
+  .get('/ram/current', () => {
+    const snapshot = ramMonitor.getLastSnapshot();
+    if (!snapshot) {
+      return { error: 'No data available yet' };
+    }
+    return snapshot;
   })
 
-  .get('/stats', () => {
-    const recentStats = dbClient.getLatestSystemStats(10);
-    return {
-      stats: recentStats,
-      count: recentStats.length
-    };
+  .get('/ram/history', ({ query }) => {
+    const limit = parseInt(query.limit as string) || 100;
+    const history = ramMonitor.getHistory(limit);
+    return { history, count: history.length };
+  })
+
+  .get('/ram/stats', ({ query }) => {
+    const minutes = parseInt(query.minutes as string) || 60;
+    return ramMonitor.getStats(minutes);
+  })
+
+  .get('/ram/status', () => ramMonitor.getStatus())
+
+  // Events endpoint
+  .get('/events', ({ query }) => {
+    const type = query.type as string;
+    const severity = query.severity as string;
+    const limit = parseInt(query.limit as string) || 100;
+
+    const events = dbClient.getEvents(type, severity, limit);
+    return { events, count: events.length };
   })
 
   .listen(config.server.port);
 
 // Graceful shutdown
-process.on('SIGINT', () => {
+const shutdown = () => {
   logger.info('Shutting down gracefully...');
+  ramMonitor.stop();
   dbClient.close();
   process.exit(0);
-});
+};
 
-process.on('SIGTERM', () => {
-  logger.info('Shutting down gracefully...');
-  dbClient.close();
-  process.exit(0);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 
 console.log(`
 🚀 Linux Activity Tracker is running!
 📡 Server: http://${app.server?.hostname}:${app.server?.port}
 🏥 Health: http://${app.server?.hostname}:${app.server?.port}/health
-📊 Stats: http://${app.server?.hostname}:${app.server?.port}/stats
-📝 Commands: http://${app.server?.hostname}:${app.server?.port}/commands
-📈 Command Stats: http://${app.server?.hostname}:${app.server?.port}/commands/stats
 
-🔧 To install shell hook:
-   cd shell-hooks && bash install.sh
+📊 RAM Monitoring:
+   Current: http://${app.server?.hostname}:${app.server?.port}/ram/current
+   History: http://${app.server?.hostname}:${app.server?.port}/ram/history
+   Stats: http://${app.server?.hostname}:${app.server?.port}/ram/stats
+   Status: http://${app.server?.hostname}:${app.server?.port}/ram/status
+
+📝 Commands:
+   Log: POST http://${app.server?.hostname}:${app.server?.port}/api/command
+   List: http://${app.server?.hostname}:${app.server?.port}/commands
+   Stats: http://${app.server?.hostname}:${app.server?.port}/commands/stats
+
+📋 Events: http://${app.server?.hostname}:${app.server?.port}/events
+
+🔧 To install shell hook: cd shell-hooks && bash install.sh
 `);
+
