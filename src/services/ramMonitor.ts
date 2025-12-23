@@ -3,6 +3,7 @@ import { dbClient } from '../db/client';
 import { logger } from '../utils/logger';
 import { getConfig } from '../utils/config';
 import { ramDetector } from './ramDetector';
+import { processManager } from './processManager';
 
 export interface RAMSnapshot extends MemoryInfo {
   timestamp: number;
@@ -21,9 +22,6 @@ export class RAMMonitor {
   private monitoringStartTime: number = Date.now();
   private onHighRAMCallback: ((snapshot: RAMSnapshot) => void) | null = null;
 
-  /**
-   * Start monitoring RAM usage
-   */
   start(): void {
     if (this.isRunning) {
       logger.warn('RAM monitor is already running');
@@ -35,10 +33,8 @@ export class RAMMonitor {
 
     logger.info(`Starting RAM monitor (interval: ${interval}ms, threshold: ${config.ram.threshold}%)`);
 
-    // Take initial snapshot
     this.captureSnapshot();
 
-    // Start periodic monitoring
     this.intervalId = setInterval(() => {
       this.captureSnapshot();
     }, interval);
@@ -46,7 +42,6 @@ export class RAMMonitor {
     this.isRunning = true;
     this.monitoringStartTime = Date.now();
 
-    // Log event
     dbClient.insertEvent({
       type: 'ram_monitor',
       severity: 'info',
@@ -55,9 +50,6 @@ export class RAMMonitor {
     });
   }
 
-  /**
-   * Stop monitoring
-   */
   stop(): void {
     if (!this.isRunning) {
       logger.warn('RAM monitor is not running');
@@ -74,7 +66,6 @@ export class RAMMonitor {
     const uptime = Date.now() - this.monitoringStartTime;
     logger.info(`RAM monitor stopped (uptime: ${Math.round(uptime / 1000)}s)`);
 
-    // Log event
     dbClient.insertEvent({
       type: 'ram_monitor',
       severity: 'info',
@@ -83,16 +74,10 @@ export class RAMMonitor {
     });
   }
 
-  /**
-   * Set callback for high RAM events
-   */
   onHighRAM(callback: (snapshot: RAMSnapshot) => void): void {
     this.onHighRAMCallback = callback;
   }
 
-  /**
-   * Capture a RAM snapshot and store it
-   */
   private captureSnapshot(): void {
     try {
       const memInfo = procParser.getMemoryInfo();
@@ -106,7 +91,6 @@ export class RAMMonitor {
         load_avg: loadAvg
       };
 
-      // Store in database
       dbClient.insertSystemStat({
         ram_total_mb: snapshot.total_mb,
         ram_used_mb: snapshot.used_mb,
@@ -116,7 +100,6 @@ export class RAMMonitor {
         swap_used_mb: snapshot.swap_used_mb
       });
 
-      // Update last snapshot
       this.lastSnapshot = snapshot;
 
       logger.debug(
@@ -124,11 +107,13 @@ export class RAMMonitor {
         `Load: ${snapshot.load_avg.load1}`
       );
 
-      // Check threshold with detection logic
       const shouldTakeAction = ramDetector.checkThreshold(snapshot);
 
       if (shouldTakeAction) {
-        logger.warn('🚨 HIGH RAM DETECTED - Action required!');
+        logger.warn('🚨 HIGH RAM DETECTED - Triggering process manager');
+
+        // Trigger auto-kill
+        this.handleHighRAMDetection(snapshot);
 
         // Trigger callback if set
         if (this.onHighRAMCallback) {
@@ -147,16 +132,28 @@ export class RAMMonitor {
     }
   }
 
-  /**
-   * Get the latest snapshot
-   */
+  private async handleHighRAMDetection(snapshot: RAMSnapshot): Promise<void> {
+    try {
+      const results = await processManager.handleHighRAM(snapshot.percent);
+
+      if (results.length > 0) {
+        const successCount = results.filter(r => r.success).length;
+        const freedMemory = results.reduce((sum, r) => sum + (r.success ? r.memory_freed_mb : 0), 0);
+
+        logger.info(
+          `✅ Killed ${successCount}/${results.length} processes, ` +
+          `freed ~${Math.round(freedMemory)}MB`
+        );
+      }
+    } catch (error) {
+      logger.error('Error handling high RAM', error);
+    }
+  }
+
   getLastSnapshot(): RAMSnapshot | null {
     return this.lastSnapshot;
   }
 
-  /**
-   * Get monitoring status
-   */
   getStatus() {
     const detectorStats = ramDetector.getStats();
 
@@ -174,9 +171,6 @@ export class RAMMonitor {
     };
   }
 
-  /**
-   * Get RAM statistics over a time period
-   */
   getStats(minutes: number = 60) {
     const cutoff = Date.now() - (minutes * 60 * 1000);
     const db = dbClient.getDb();
@@ -202,9 +196,6 @@ export class RAMMonitor {
     };
   }
 
-  /**
-   * Get recent history
-   */
   getHistory(limit: number = 100): RAMSnapshot[] {
     const stats = dbClient.getLatestSystemStats(limit);
 

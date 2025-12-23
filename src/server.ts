@@ -1,3 +1,4 @@
+
 import { Elysia } from 'elysia';
 import { loadConfig, getConfig } from './utils/config';
 import { logger } from './utils/logger';
@@ -6,6 +7,7 @@ import { commandLogger, CommandPayload } from './services/commandLogger';
 import { ramMonitor } from './services/ramMonitor';
 import { ramDetector } from './services/ramDetector';
 import { processScanner } from './system/processScanner';
+import { processManager } from './services/processManager';
 
 // Load configuration
 loadConfig();
@@ -27,13 +29,7 @@ try {
   logger.info('✅ RAM monitoring started');
 
   ramMonitor.onHighRAM((snapshot) => {
-    logger.warn(`⚠️  High RAM callback triggered: ${snapshot.percent}%`);
-
-    if (config.ram.enableAutoKill) {
-      logger.info('TODO: Trigger process killer (Step 7)');
-    } else {
-      logger.info('Auto-kill disabled in config');
-    }
+    logger.warn(`⚠️  High RAM callback: ${snapshot.percent}%`);
   });
 } catch (error) {
   logger.error('❌ Failed to start RAM monitoring', error);
@@ -46,6 +42,7 @@ const app = new Elysia()
       const ramStatus = ramMonitor.getStatus();
       const lastSnapshot = ramMonitor.getLastSnapshot();
       const procStats = processScanner.getStats();
+      const killStats = processManager.getKilledProcessStats();
 
       return {
         status: 'ok',
@@ -55,27 +52,23 @@ const app = new Elysia()
         database: 'connected',
         ramMonitor: {
           running: ramStatus.isRunning,
-          uptime: ramStatus.uptime,
           current: lastSnapshot ? {
             percent: lastSnapshot.percent,
-            used_mb: lastSnapshot.used_mb,
-            available_mb: lastSnapshot.available_mb
+            used_mb: lastSnapshot.used_mb
           } : null,
           detector: {
-            inCooldown: ramStatus.detector.isInCooldown,
-            cooldownMultiplier: ramStatus.detector.cooldownMultiplier
+            inCooldown: ramStatus.detector.isInCooldown
           }
         },
         processes: procStats,
+        killedProcesses: killStats,
         stats: {
-          commandsTotal: cmdStats.total,
-          commandsToday: cmdStats.today
+          commandsTotal: cmdStats.total
         }
       };
     } catch (error) {
       return {
         status: 'degraded',
-        timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : 'Unknown error'
       };
     }
@@ -86,99 +79,38 @@ const app = new Elysia()
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      commandLog: 'POST /api/command',
-      commands: '/commands',
-      commandStats: '/commands/stats',
-      ramCurrent: '/ram/current',
-      ramHistory: '/ram/history',
-      ramStats: '/ram/stats',
-      ramStatus: '/ram/status',
-      detectorStats: '/detector/stats',
-      detectorHistory: '/detector/history',
-      detectorReset: 'POST /detector/reset',
       processes: '/processes',
       processesKillable: '/processes/killable',
-      processesTop: '/processes/top',
-      processStats: '/processes/stats',
-      processValidate: '/processes/validate/:pid',
-      events: '/events',
+      killDryRun: '/kill/dry-run',
+      killByPid: 'POST /kill/:pid',
+      killedHistory: '/killed/history',
+      killedStats: '/killed/stats',
       graphql: '/graphql (coming in Step 8)'
     }
   }))
 
-  // Command logging endpoint
   .post('/api/command', async ({ body }) => {
     try {
       const payload = body as CommandPayload;
-
       if (!payload.cmd || !payload.cwd) {
-        return { success: false, error: 'Missing required fields: cmd, cwd' };
+        return { success: false, error: 'Missing required fields' };
       }
-
       const id = commandLogger.logCommand(payload);
-
-      if (id) {
-        return { success: true, id, timestamp: Date.now() };
-      } else {
-        return { success: false, error: 'Failed to log command' };
-      }
+      return id ? { success: true, id } : { success: false };
     } catch (error) {
-      logger.error('Error in /api/command', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
+      return { success: false, error: String(error) };
     }
   })
 
   .get('/commands', () => {
-    const recentCommands = dbClient.getRecentCommands(50);
-    return { commands: recentCommands, count: recentCommands.length };
+    const commands = dbClient.getRecentCommands(50);
+    return { commands, count: commands.length };
   })
 
-  .get('/commands/stats', () => commandLogger.getStats())
-
-  // RAM endpoints
-  .get('/ram/current', () => {
-    const snapshot = ramMonitor.getLastSnapshot();
-    if (!snapshot) {
-      return { error: 'No data available yet' };
-    }
-    return snapshot;
-  })
-
-  .get('/ram/history', ({ query }) => {
-    const limit = parseInt(query.limit as string) || 100;
-    const history = ramMonitor.getHistory(limit);
-    return { history, count: history.length };
-  })
-
-  .get('/ram/stats', ({ query }) => {
-    const minutes = parseInt(query.minutes as string) || 60;
-    return ramMonitor.getStats(minutes);
-  })
-
+  .get('/ram/current', () => ramMonitor.getLastSnapshot() || { error: 'No data' })
   .get('/ram/status', () => ramMonitor.getStatus())
-
-  // Detector endpoints
   .get('/detector/stats', () => ramDetector.getStats())
 
-  .get('/detector/history', ({ query }) => {
-    const limit = parseInt(query.limit as string) || 50;
-    const history = ramDetector.getHistory(limit);
-    return { history, count: history.length };
-  })
-
-  .post('/detector/reset', () => {
-    ramDetector.resetCooldown();
-    return {
-      success: true,
-      message: 'Cooldown reset successfully',
-      timestamp: Date.now()
-    };
-  })
-
-  // Process endpoints
   .get('/processes', () => {
     const processes = processScanner.getUserProcesses();
     return { processes, count: processes.length };
@@ -195,23 +127,40 @@ const app = new Elysia()
     return { processes: top, count: top.length };
   })
 
-  .get('/processes/stats', () => processScanner.getStats())
-
-  .get('/processes/validate/:pid', ({ params }) => {
-    const pid = parseInt(params.pid, 10);
-    if (isNaN(pid)) {
-      return { valid: false, reason: 'Invalid PID' };
-    }
-    return processScanner.validateProcess(pid);
+  // Kill endpoints
+  .get('/kill/dry-run', ({ query }) => {
+    const maxKills = parseInt(query.max as string) || 1;
+    return processManager.getDryRun(maxKills);
   })
 
-  // Events endpoint
+  .post('/kill/:pid', async ({ params, body }) => {
+    const pid = parseInt(params.pid, 10);
+    if (isNaN(pid)) {
+      return { success: false, error: 'Invalid PID' };
+    }
+
+    const reason = (body as any)?.reason || 'Manual kill request';
+    const result = await processManager.killProcessByPid(pid, reason);
+
+    if (!result) {
+      return { success: false, error: 'Cannot kill process' };
+    }
+
+    return { success: result.success, result };
+  })
+
+  .get('/killed/history', ({ query }) => {
+    const limit = parseInt(query.limit as string) || 50;
+    const history = dbClient.getKilledProcesses(limit);
+    return { history, count: history.length };
+  })
+
+  .get('/killed/stats', () => processManager.getKilledProcessStats())
+
   .get('/events', ({ query }) => {
     const type = query.type as string;
-    const severity = query.severity as string;
     const limit = parseInt(query.limit as string) || 100;
-
-    const events = dbClient.getEvents(type, severity, limit);
+    const events = dbClient.getEvents(type, undefined, limit);
     return { events, count: events.length };
   })
 
@@ -231,29 +180,16 @@ process.on('SIGTERM', shutdown);
 console.log(`
 🚀 Linux Activity Tracker is running!
 📡 Server: http://${app.server?.hostname}:${app.server?.port}
-🏥 Health: http://${app.server?.hostname}:${app.server?.port}/health
 
-📊 RAM Monitoring:
-   Current: http://${app.server?.hostname}:${app.server?.port}/ram/current
-   History: http://${app.server?.hostname}:${app.server?.port}/ram/history
-   Stats: http://${app.server?.hostname}:${app.server?.port}/ram/stats
+⚠️  Auto-kill: ${config.ram.enableAutoKill ? 'ENABLED' : 'DISABLED'}
+📊 RAM Threshold: ${config.ram.threshold}%
 
-🔍 Detector:
-   Stats: http://${app.server?.hostname}:${app.server?.port}/detector/stats
-   History: http://${app.server?.hostname}:${app.server?.port}/detector/history
-
-⚙️  Processes:
-   All: http://${app.server?.hostname}:${app.server?.port}/processes
-   Killable: http://${app.server?.hostname}:${app.server?.port}/processes/killable
-   Top: http://${app.server?.hostname}:${app.server?.port}/processes/top
-   Stats: http://${app.server?.hostname}:${app.server?.port}/processes/stats
-
-📝 Commands:
-   List: http://${app.server?.hostname}:${app.server?.port}/commands
-   Stats: http://${app.server?.hostname}:${app.server?.port}/commands/stats
-
-📋 Events: http://${app.server?.hostname}:${app.server?.port}/events
-
-🔧 To install shell hook: cd shell-hooks && bash install.sh
+🔧 Endpoints:
+   Health: /health
+   Processes: /processes/killable
+   Dry Run: /kill/dry-run
+   Kill PID: POST /kill/:pid
+   History: /killed/history
+   Stats: /killed/stats
 `);
 
