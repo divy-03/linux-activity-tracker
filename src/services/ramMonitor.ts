@@ -135,21 +135,29 @@ export class RAMMonitor {
   private async handleHighRAMDetection(snapshot: RAMSnapshot): Promise<void> {
     try {
       const results = await processManager.handleHighRAM(snapshot.percent);
+      const freedMemory = results.reduce(
+        (sum, r) => sum + (r.success ? r.memory_freed_mb : 0),
+        0
+      );
 
-      if (results.length > 0) {
-        const successCount = results.filter(r => r.success).length;
-        const freedMemory = results.reduce((sum, r) => sum + (r.success ? r.memory_freed_mb : 0), 0);
-
-        logger.info(
-          `✅ Killed ${successCount}/${results.length} processes, ` +
-          `freed ~${Math.round(freedMemory)}MB`
-        );
+      // Notify n8n via webhook if configured
+      const webhookUrl = process.env.N8N_RAM_SPIKE_WEBHOOK;
+      if (webhookUrl) {
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: 'ram_spike',
+            ramPercent: snapshot.percent,
+            freedMemoryMb: Math.round(freedMemory),
+            timestamp: new Date(snapshot.timestamp).toISOString()
+          })
+        }).catch(() => { });
       }
     } catch (error) {
       logger.error('Error handling high RAM', error);
     }
   }
-
   getLastSnapshot(): RAMSnapshot | null {
     return this.lastSnapshot;
   }

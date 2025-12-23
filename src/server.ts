@@ -1,4 +1,3 @@
-
 import { Elysia } from 'elysia';
 import { loadConfig, getConfig } from './utils/config';
 import { logger } from './utils/logger';
@@ -8,6 +7,7 @@ import { ramMonitor } from './services/ramMonitor';
 import { ramDetector } from './services/ramDetector';
 import { processScanner } from './system/processScanner';
 import { processManager } from './services/processManager';
+import { timeStamp } from 'console';
 
 // Load configuration
 loadConfig();
@@ -162,6 +162,95 @@ const app = new Elysia()
     const limit = parseInt(query.limit as string) || 100;
     const events = dbClient.getEvents(type, undefined, limit);
     return { events, count: events.length };
+  })
+
+  .post('/webhooks/ram-spike', ({ body }) => {
+    // This is called internally, but can also call it manually
+    return {
+      ok: true,
+      received: body ?? null,
+      timestamp: Date.now()
+    };
+  })
+
+  // Daily summary endpoint for n8n to poll
+  .get('/reports/daily-commands', () => {
+    const db = dbClient.getDb();
+
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+
+    const total = db.prepare('SELECT COUNT(*) as c FROM commands WHERE created_at > ?').get(since) as { c: number };
+
+    const top = db
+      .prepare(`
+      SELECT 
+        SUBSTR(cmd, 1, INSTR(cmd || ' ', ' ') - 1) as base_cmd,
+        COUNT(*) as count
+      FROM commands
+      WHERE created_at > ?
+      GROUP BY base_cmd
+      ORDER BY count DESC
+      LIMIT 10
+    `)
+      .all(since) as { base_cmd: string; count: number }[];
+
+    return {
+      generatedAt: new Date().toISOString(),
+      window: 'last_24h',
+      totalCommands: total.c,
+      topCommands: top
+    };
+  })
+
+  // Weekly system report for n8n polling
+  .get('/reports/weekly-system', () => {
+    const sevenDays = 7 * 24 * 60 * 60 * 1000;
+    const since = Date.now() - sevenDays;
+    const db = dbClient.getDb();
+
+    const ramStats = db
+      .prepare(`
+      SELECT 
+        AVG(ram_percent) as avg_percent,
+        MAX(ram_percent) as max_percent,
+        MIN(ram_percent) as min_percent
+      FROM system_stats
+      WHERE created_at > ?
+    `)
+      .get(since) as any;
+
+    const kills = db
+      .prepare(`
+      SELECT 
+        COUNT(*) as total_killed,
+        SUM(memory_mb) as total_memory_freed
+      FROM killed_processes
+      WHERE created_at > ?
+    `)
+      .get(since) as any;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      window: 'last_7d',
+      ram: {
+        avg: Math.round((ramStats.avg_percent || 0) * 100) / 100,
+        max: ramStats.max_percent || 0,
+        min: ramStats.min_percent || 0
+      },
+      killed: {
+        total: kills.total_killed || 0,
+        memoryFreedMb: Math.round((kills.total_memory_freed || 0) * 100) / 100
+      }
+    };
+  })
+
+  // DB backup info endpoint – n8n can hit this then run a backup
+  .get('/backup/info', () => {
+    const config = getConfig();
+    return {
+      dbPath: config.database.path,
+      timestamp: Date.now()
+    };
   })
 
   .listen(config.server.port);
