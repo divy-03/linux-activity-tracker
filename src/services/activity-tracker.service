@@ -1,0 +1,20 @@
+[Unit]
+Description=Linux Activity Tracker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/code/web/linux-activity-tracker
+ExecStart=%h/.bun/bin/bun src/server.ts
+Restart=on-failure
+RestartSec=5
+Environment=Node_ENV=production
+Environment=RAM_THRESHOLD=90
+Environment=RAM_ENABLE_AUTOKILL=false
+Environment=TRACKER_HOST=127.0.0.1
+Environment=TRACKER_PORT=3000
+
+Nice=5
+
+[Install]
+WantedBy=default.target
