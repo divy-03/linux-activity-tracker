@@ -1,4 +1,27 @@
 services:
+  tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tracker
+    restart: unless-stopped
+    environment:
+      TRACKER_HOST: 0.0.0.0
+      TRACKER_PORT: 3000
+      RAM_THRESHOLD: 88
+      RAM_MONITOR_INTERVAL: 5000
+      RAM_COOLDOWN: 120000
+      RAM_ENABLE_AUTOKILL: "false"
+      N8N_RAM_SPIKE_WEBHOOK: "http://n8n:5678/webhook/ram-spike"
+      DB_PATH: "/app/data/activity.db"
+      LOG_LEVEL: "info"
+    volumes:
+      - tracker_data:/app/data
+    networks:
+      - automation
+    ports:
+      - "3000:3000"
+
   n8n:
     image: docker.n8n.io/n8nio/n8n
     container_name: n8n
@@ -15,7 +38,14 @@ services:
       - WEBHOOK_URL=http://localhost:5678/
     volumes:
       - n8n_data:/home/node/.n8n
+    networks:
+      - automation
+
+networks:
+  automation:
+    driver: bridge
 
 volumes:
+  tracker_data:
   n8n_data:
     external: false
