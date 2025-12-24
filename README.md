@@ -9,7 +9,7 @@
 A lightweight daemon that:
 
 - Logs **every shell command** you run
-- Monitors **RAM usage** continuously  
+- Monitors **RAM usage** continuously
 - **Safely kills** user processes under memory pressure
 - Exposes **HTTP API** for dashboards & n8n workflows
 - Runs in **Docker** with persistent SQLite storage
@@ -27,7 +27,6 @@ A lightweight daemon that:
 | REST API for all data | ✅ |
 | n8n webhook integration | ✅ |
 | Docker Compose (tracker + n8n + postgres) | ✅ |
-| Web dashboard (`/ui`) | ✅ |
 | systemd user service | ✅ |
 
 ## 🛡️ Safety Rules (Critical)
@@ -50,12 +49,13 @@ This tool **NEVER**:
 
 ```bash
 # Clone & start everything
-git clone <your-repo>
+git clone https://github.com/divy-03/linux-activity-tracker
+# OR
+gh repo clone divy-03/linux-activity-tracker
 cd linux-activity-tracker
 docker compose up -d
 
 # Tracker API: http://localhost:3000/health
-# Tracker UI: http://localhost:3000/ui
 # n8n: http://localhost:5678
 ```
 
@@ -66,7 +66,9 @@ docker compose up -d
 curl -fsSL https://bun.sh/install | bash
 
 # Clone project
-git clone <your-repo>
+git clone https://github.com/divy-03/linux-activity-tracker
+# OR
+gh repo clone divy-03/linux-activity-tracker
 cd linux-activity-tracker
 
 # Install & run
@@ -99,12 +101,14 @@ source ~/.zshrc  # Reload shell
 
 **Full API docs**: Open `http://localhost:3000/` after starting.
 
-## 🧩 n8n Workflows (Pre-built)
+## 🧩 n8n Workflows
+
+You can build custom n8n workflows too as docker compose runs an instance of n8n too.
+Here are the workflows I have created:
 
 1. **RAM Spike Alerts**: Webhook receives `ram_spike` events → Slack/Email.
-2. **Daily Command Summary**: Cron → `/reports/daily-commands` → Email.
-3. **Weekly System Report**: Weekly cron → `/reports/weekly-system` → Email.
-4. **DB Backup**: Daily cron → S3/Google Drive.
+2. **Daily Command Summary**: Cron → `/reports/daily-commands` → Slack/Email.
+3. **Weekly System Report**: Weekly cron → `/reports/weekly-system` → Slack/Email.
 
 **Tracker auto-calls n8n webhook** at `http://n8n:5678/webhook/ram-spike` on high RAM.
 
@@ -219,13 +223,3 @@ bun run test:killer    # Dry-run killing
 3. `bun dev` for development
 4. Add tests in `test-*.ts`
 5. Submit PR
-
-## 📄 License
-
-MIT
-
----
-
-**⭐ Star if useful!**  
-Built with ❤️ for developers who want control over their local system.
-
