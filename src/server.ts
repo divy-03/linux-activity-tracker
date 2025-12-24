@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { Elysia } from 'elysia';
 import { loadConfig, getConfig } from './utils/config';
 import { logger } from './utils/logger';

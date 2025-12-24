@@ -4,7 +4,7 @@
     "host": "localhost"
   },
   "ram": {
-    "threshold": 90,
+    "threshold": 88,
     "monitorInterval": 5000,
     "cooldown": 120000,
     "enableAutoKill": false

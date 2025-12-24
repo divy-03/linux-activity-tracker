@@ -15,8 +15,9 @@
     "test:killer": "bun run test-killer.ts"
   },
   "dependencies": {
-    "elysia": "latest",
     "@elysiajs/graphql-yoga": "^1.1.2",
+    "dotenv": "^17.2.3",
+    "elysia": "latest",
     "graphql": "^16.8.1"
   },
   "devDependencies": {

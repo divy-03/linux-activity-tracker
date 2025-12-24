@@ -141,7 +141,7 @@ export class RAMMonitor {
       );
 
       // Notify n8n via webhook if configured
-      const webhookUrl = process.env.N8N_RAM_SPIKE_WEBHOOK;
+      const webhookUrl = process.env.N8N_RAM_SPIKE_WEBHOOK || "http://n8n:5678/webhook-test/ram-spike";
       if (webhookUrl) {
         await fetch(webhookUrl, {
           method: 'POST',
