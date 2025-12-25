@@ -9,8 +9,7 @@ SHELL_NAME="$(basename "$SHELL")"
 echo "🗑️  Uninstalling Activity Tracker Shell Hook..."
 
 uninstall_zsh() {
-  local zshrc="$HOME/.zshrc"
-
+  local zshrc="$HOME/dotfiles/zsh/.zshrc"
   if [[ ! -f "$zshrc" ]]; then
     echo "❌ ~/.zshrc not found"
     return
@@ -19,9 +18,11 @@ uninstall_zsh() {
   # Backup
   cp "$zshrc" "${zshrc}.backup.$(date +%s)"
 
-  # Remove hook lines
+  # Remove the specific source line (escape special chars in path)
+  sed -i '\|source.*linux-activity-tracker.*zsh-hook\.sh|d' "$zshrc"
+
+  # Also remove any comment line if it exists
   sed -i '/# Linux Activity Tracker Hook/d' "$zshrc"
-  sed -i '/activity-tracker\/zsh-hook.sh/d' "$zshrc"
 
   echo "✅ Removed from $zshrc"
 }

@@ -13,7 +13,7 @@ echo "🔧 Installing Activity Tracker Shell Hook..."
 echo "Detected shell: $SHELL_NAME"
 
 install_zsh() {
-  local zshrc="$HOME/.zshrc"
+  local zshrc="$HOME/dotfiles/zsh/.zshrc"
   local hook_path="$SCRIPT_DIR/zsh-hook.sh"
 
   # Check if already installed
