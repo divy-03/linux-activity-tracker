@@ -22,9 +22,6 @@ install_zsh() {
     return
   fi
 
-  # Backup
-  cp "$zshrc" "${zshrc}.backup.$(date +%s)" 2>/dev/null || true
-
   # Add source line
   echo "" >>"$zshrc"
   echo "# Linux Activity Tracker Hook" >>"$zshrc"

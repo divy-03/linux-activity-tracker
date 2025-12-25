@@ -15,9 +15,6 @@ uninstall_zsh() {
     return
   fi
 
-  # Backup
-  cp "$zshrc" "${zshrc}.backup.$(date +%s)"
-
   # Remove the specific source line (escape special chars in path)
   sed -i '\|source.*linux-activity-tracker.*zsh-hook\.sh|d' "$zshrc"
 
