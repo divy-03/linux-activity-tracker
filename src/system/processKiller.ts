@@ -1,4 +1,3 @@
-import { spawnSync } from 'child_process';
 import { logger } from '../utils/logger';
 import { ProcessInfo } from './processScanner';
 

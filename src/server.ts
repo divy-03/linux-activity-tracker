@@ -10,7 +10,6 @@ import { ramMonitor } from './services/ramMonitor';
 import { ramDetector } from './services/ramDetector';
 import { processScanner } from './system/processScanner';
 import { processManager } from './services/processManager';
-import { timeStamp } from 'console';
 
 // Load configuration
 loadConfig();
